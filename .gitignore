@@ -1,0 +1,43 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.so
+
+# Plan
+plan.md
+
+# Environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+
+# VS Code
+.vscode/
+
+# macOS/Linux
+.DS_Store
+.idea/
+*.swp
+
+# Tests/coverage
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Logs/temp
+logs/
+*.log
+/tmp/
+
+# Data/output
+output/
+*.csv
+!data/sample_claims.csv
+
+.python_packages
