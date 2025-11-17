@@ -8,14 +8,17 @@ __pycache__/
 # Plan
 plan.md
 oidc.md
+temp.md
 
 # Environments
 .venv/
 venv/
 env/
-
+.azure/
+    
 # Environment files
 .env
+local.settings.json
 
 # VS Code
 .vscode/
@@ -38,7 +41,11 @@ logs/
 
 # Data/output
 output/
+build/
 *.csv
 !data/sample_claims.csv
+
+# Compiled Bicep templates (optional - remove this line if you want to include compiled ARM templates)
+infra/*.json
 
 .python_packages

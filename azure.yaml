@@ -1,0 +1,18 @@
+name: aifoundry-claim-classifier-agent
+
+infra:
+  provider: bicep
+  path: infra
+  parameters:
+    location: ${AZURE_LOCATION}
+    environmentName: ${AZURE_ENV_NAME}
+    functionAppName: ${FUNCTION_APP_NAME}
+    projectEndpoint: ${PROJECT_ENDPOINT}
+    modelDeploymentName: ${MODEL_DEPLOYMENT_NAME}
+    projectAccountResourceGroup: ${PROJECT_ACCOUNT_RESOURCE_GROUP}
+
+services:
+  functionApp:
+    project: ./function_app
+    host: function
+    language: python

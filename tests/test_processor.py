@@ -22,9 +22,9 @@ def test_process_file(monkeypatch, tmp_path):
     monkeypatch.setattr("function_app.processor.FoundryClient", MockClient)
 
     output_file = tmp_path / "output.csv"
-    process_file(str(input_file), str(output_file))
+    final_output = process_file(str(input_file), str(output_file))
 
-    out_df = pd.read_csv(output_file)
+    out_df = pd.read_csv(final_output)
     assert "classification" in out_df.columns
     assert "reasoning" in out_df.columns
     assert len(out_df) == 2

@@ -1,0 +1,178 @@
+name: azure-dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      cleanup-resources:
+        description: "Clean up resources after deployment"
+        required: false
+        default: true
+        type: boolean
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - ".github/workflows/azure-dev.yml"
+      - "infra/**"
+      - "function_app/**"
+      - "BlobProcessor/**"
+      - "requirements.txt"
+      - "tests/**"
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  AZURE_ENV_NAME: ${{ github.event.pull_request.number && format('dev-pr{0}', github.event.pull_request.number) || 'dev' }}
+  AZURE_LOCATION: "canadacentral"
+
+jobs:
+  build-verify-package:
+    name: Build, Test, and Package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load environment variables from .env
+        shell: bash
+        run: |
+          echo "AZURE_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          set -o allexport
+          source ./.env
+          set +o allexport
+          {
+            echo "PROJECT_ENDPOINT=$PROJECT_ENDPOINT"
+            echo "MODEL_DEPLOYMENT_NAME=$MODEL_DEPLOYMENT_NAME"
+          } >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install app dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r function_app/requirements.txt
+
+      - name: Run unit tests
+        run: pytest
+
+      - name: Set up azd
+        uses: Azure/setup-azd@v2
+
+      - name: Configure azd to use Azure CLI authentication
+        run: azd config set auth.useAzCliAuth "true"
+
+      - name: Azure CLI login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure azd environment exists
+        run: |
+          $subscriptionId = $env:AZURE_SUBSCRIPTION_ID
+          $currentEnvs = azd env list --output json | ConvertFrom-Json
+          if ($null -eq ($currentEnvs | Where-Object { $_.name -eq $env:AZURE_ENV_NAME })) {
+            azd env new $env:AZURE_ENV_NAME --subscription-id $subscriptionId --location $env:AZURE_LOCATION --no-prompt
+          } else {
+            azd env select $env:AZURE_ENV_NAME
+          }
+          azd env set AZURE_LOCATION $env:AZURE_LOCATION
+          $sanitizedEnvName = ($env:AZURE_ENV_NAME -replace '\s', '-').ToLower()
+          $resourceGroupName = "$sanitizedEnvName-claims-rg"
+          azd env set AZURE_RESOURCE_GROUP $resourceGroupName
+          azd env set PROJECT_ENDPOINT $env:PROJECT_ENDPOINT
+          azd env set MODEL_DEPLOYMENT_NAME $env:MODEL_DEPLOYMENT_NAME
+
+      - name: Bicep lint
+        run: az bicep lint --file ./infra/main.bicep
+
+      - name: Validate template
+        run: |
+          az deployment sub validate \
+            --location $env:AZURE_LOCATION \
+            --template-file ./infra/main.bicep \
+            --parameters @./infra/parameters.dev.json \
+            --parameters environmentName=$env:AZURE_ENV_NAME \
+                         functionAppName="${env:AZURE_ENV_NAME}-claims-func" \
+                         projectEndpoint=$env:PROJECT_ENDPOINT \
+                         modelDeploymentName=$env:MODEL_DEPLOYMENT_NAME
+
+      - name: Clean local build artifacts
+        run: |
+          if (Test-Path .python_packages) {
+            Remove-Item -Recurse -Force .python_packages
+          }
+
+  deploy:
+    name: Provision and Deploy
+    needs: build-verify-package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load environment variables from .env
+        shell: bash
+        run: |
+          echo "AZURE_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          set -o allexport
+          source ./.env
+          set +o allexport
+          {
+            echo "PROJECT_ENDPOINT=$PROJECT_ENDPOINT"
+            echo "MODEL_DEPLOYMENT_NAME=$MODEL_DEPLOYMENT_NAME"
+          } >> $GITHUB_ENV
+
+      - name: Set up azd
+        uses: Azure/setup-azd@v2
+
+      - name: Configure azd to use Azure CLI authentication
+        run: azd config set auth.useAzCliAuth "true"
+
+      - name: Azure CLI login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure azd environment exists
+        run: |
+          $subscriptionId = $env:AZURE_SUBSCRIPTION_ID
+          $currentEnvs = azd env list --output json | ConvertFrom-Json
+          if ($null -eq ($currentEnvs | Where-Object { $_.name -eq $env:AZURE_ENV_NAME })) {
+            azd env new $env:AZURE_ENV_NAME --subscription-id $subscriptionId --location $env:AZURE_LOCATION --no-prompt
+          } else {
+            azd env select $env:AZURE_ENV_NAME
+          }
+          azd env set AZURE_LOCATION $env:AZURE_LOCATION
+          $sanitizedEnvName = ($env:AZURE_ENV_NAME -replace '\s', '-').ToLower()
+          $resourceGroupName = "$sanitizedEnvName-claims-rg"
+          azd env set AZURE_RESOURCE_GROUP $resourceGroupName
+          azd env set PROJECT_ENDPOINT $env:PROJECT_ENDPOINT
+          azd env set MODEL_DEPLOYMENT_NAME $env:MODEL_DEPLOYMENT_NAME
+
+      - name: Provision infrastructure
+        run: azd provision --no-prompt
+
+      - name: Deploy Function App
+        run: azd deploy --service functionApp --no-prompt
+
+      - name: Create Event Grid subscription
+        shell: bash
+        run: bash ./scripts/create_event_subscription.sh
